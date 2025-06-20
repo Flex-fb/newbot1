@@ -1,46 +1,57 @@
 import os
 import logging
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils import executor
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    text = update.message.text or ""
-    name = user.full_name or "Без имени"
-    username = f"@{user.username}" if user.username else "—"
+bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
+dp = Dispatcher(bot)
+
+@dp.message_handler(content_types=types.ContentType.TEXT)
+async def handle_message(message: types.Message):
+    user = message.from_user
+    full_name = user.full_name
+    username = user.username or "не указан"
     user_id = user.id
-    date = update.message.date.strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = message.text
 
-    message = (
-        f"<b>💬 Новое сообщение от клиента</b>
-
-"
-        f"<b>Имя:</b> {name}
-"
-        f"<b>Username:</b> {username}
-"
-        f"<b>Telegram ID:</b> <code>{user_id}</code>
-"
-        f"<b>Время:</b> {date}
-"
-        f"<b>Сообщение:</b> {text}
-"
-        f"<a href='tg://user?id={user_id}'>Ответить клиенту</a>"
+    card = (
+        f"<b>📩 Новое сообщение от клиента</b>\n\n"
+        f"<b>👤 Имя:</b> {full_name}\n"
+        f"<b>🔗 Username:</b> @{username}\n"
+        f"<b>🆔 Telegram ID:</b> <code>{user_id}</code>\n"
+        f"<b>⏰ Время:</b> {timestamp}\n"
+        f"<b>💬 Сообщение:</b> {text}\n"
     )
 
-    # Пересылаем админу и в группу
-    await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode="HTML")
-    await context.bot.send_message(chat_id=GROUP_ID, text=message, parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("✉️ Ответить", url=f"https://t.me/{username}")
+    )
+
+    # Отправка админу
+    await bot.send_message(ADMIN_ID, card, reply_markup=keyboard)
+
+    # Создание топика в группе
+    forum_topic = await bot.create_forum_topic(
+        chat_id=GROUP_ID,
+        name=f"{full_name} (@{username})"
+    )
+
+    # Отправка карточки в созданный топик
+    await bot.send_message(
+        chat_id=GROUP_ID,
+        message_thread_id=forum_topic.message_thread_id,
+        text=card,
+        reply_markup=keyboard
+    )
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    app.run_polling()
+    executor.start_polling(dp, skip_updates=True)
